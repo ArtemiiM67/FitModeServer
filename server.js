@@ -1,6 +1,5 @@
 import dotenv from "dotenv";
 dotenv.config();
-console.log("ENV FILE TEST:", process.env.OPENAI_API_KEY);
 
 import express from "express";
 import cors from "cors";
@@ -177,37 +176,82 @@ function normalizeOpenFoodFacts(product) {
   };
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[-_/.,()+]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function wordList(value) {
+  return normalizeSearchText(value).split(" ").filter(Boolean);
+}
+
+function wordPrefixMatch(words, token) {
+  return words.some((word) => word.startsWith(token));
+}
+
+function countPrefixMatches(words, tokens) {
+  let count = 0;
+  for (const token of tokens) {
+    if (wordPrefixMatch(words, token)) count += 1;
+  }
+  return count;
+}
+
+function allTokensMatch(words, tokens) {
+  if (tokens.length === 0) return false;
+  return tokens.every((token) => wordPrefixMatch(words, token));
+}
+
 function scoreFood(item, query) {
-  const q = query.toLowerCase();
-  const name = (item.name || "").toLowerCase();
-  const brand = (item.brandName || "").toLowerCase();
+  const normalizedQuery = normalizeSearchText(query);
+  const tokens = wordList(query);
+
+  const normalizedName = normalizeSearchText(item.name || "");
+  const normalizedBrand = normalizeSearchText(item.brandName || "");
+  const combined = `${normalizedName} ${normalizedBrand}`.trim();
+
+  const nameWords = wordList(item.name || "");
+  const brandWords = wordList(item.brandName || "");
+  const combinedWords = wordList(combined);
   const type = (item.dataType || "").toLowerCase();
 
   let score = 0;
 
-  if (name === q) score += 120;
-  if (name.startsWith(q)) score += 70;
-  if (name.includes(q)) score += 35;
+  if (!normalizedQuery) return score;
 
-  for (const word of q.split(/\s+/)) {
-    if (!word) continue;
-    if (name.includes(word)) score += 10;
-    if (brand.includes(word)) score += 8;
-  }
+  if (normalizedName === normalizedQuery) score += 200;
+  if (normalizedName.startsWith(normalizedQuery)) score += 120;
+  if (normalizedBrand === normalizedQuery) score += 80;
+  if (normalizedBrand.startsWith(normalizedQuery)) score += 40;
 
-  if (item.caloriesPer100g > 0) score += 10;
-  if (item.proteinPer100g > 0) score += 8;
-  if (item.carbsPer100g > 0) score += 8;
-  if (item.fatPer100g > 0) score += 8;
+  const combinedPrefixMatches = countPrefixMatches(combinedWords, tokens);
+  const namePrefixMatches = countPrefixMatches(nameWords, tokens);
+  const brandPrefixMatches = countPrefixMatches(brandWords, tokens);
+
+  score += combinedPrefixMatches * 35;
+  score += namePrefixMatches * 20;
+  score += brandPrefixMatches * 12;
+
+  if (allTokensMatch(nameWords, tokens)) score += 80;
+  else if (allTokensMatch(combinedWords, tokens)) score += 40;
+  else score -= 35;
+
+  if (item.caloriesPer100g > 0) score += 8;
+  if (item.proteinPer100g > 0) score += 6;
+  if (item.carbsPer100g > 0) score += 6;
+  if (item.fatPer100g > 0) score += 6;
 
   if (looksBranded(query)) {
     if (type.includes("branded")) score += 20;
-    if (brand) score += 15;
+    if (normalizedBrand) score += 12;
   } else {
     if (type.includes("foundation")) score += 20;
     if (type.includes("legacy")) score += 16;
     if (type.includes("survey")) score += 12;
-    if (type.includes("branded")) score -= 8;
+    if (type.includes("branded")) score -= 10;
   }
 
   if (
@@ -216,7 +260,7 @@ function scoreFood(item, query) {
     item.carbsPer100g === 0 &&
     item.fatPer100g === 0
   ) {
-    score -= 40;
+    score -= 30;
   }
 
   return score;
@@ -350,14 +394,16 @@ app.post("/food/search", async (req, res) => {
       return res.status(500).json({ error: "Missing USDA_API_KEY on server" });
     }
 
-    const query = String(req.body?.query || "").trim();
+    const rawQuery = String(req.body?.query || "").trim();
+    const query = normalizeSearchText(rawQuery);
+
     if (!query) {
       return res.status(400).json({ error: "Missing query" });
     }
 
     const body = {
       query,
-      pageSize: 12,
+      pageSize: 20,
       dataType: ["Foundation", "SR Legacy", "Survey (FNDDS)", "Branded"],
     };
 
@@ -380,10 +426,32 @@ app.post("/food/search", async (req, res) => {
     const usdaData = await usdaResp.json();
     const foods = Array.isArray(usdaData?.foods) ? usdaData.foods : [];
 
-    const normalized = foods.map(normalizeUsdaSearchFood);
-    normalized.sort((a, b) => scoreFood(b, query) - scoreFood(a, query));
+    const scored = foods
+      .map(normalizeUsdaSearchFood)
+      .map((item) => ({
+        item,
+        score: scoreFood(item, query),
+      }))
+      .filter((entry) => entry.score > -20)
+      .sort((a, b) => b.score - a.score);
 
-    res.json({ results: normalized });
+    const seen = new Set();
+    const deduped = [];
+
+    for (const entry of scored) {
+      const item = entry.item;
+      const key = `${normalizeSearchText(item.name)}|${normalizeSearchText(
+        item.brandName || ""
+      )}`;
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+
+      if (deduped.length >= 12) break;
+    }
+
+    res.json({ results: deduped });
   } catch (e) {
     console.error("FOOD SEARCH ERROR:", e);
     res.status(500).json({ error: e?.message ?? "Server error" });
