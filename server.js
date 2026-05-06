@@ -115,6 +115,33 @@ function nutrientFromDetails(food, nutrientName) {
   return 0;
 }
 
+function nutrientFromNames(food, names) {
+  const nutrients = Array.isArray(food.foodNutrients)
+    ? food.foodNutrients
+    : [];
+
+  for (const item of nutrients) {
+    const possibleNames = [
+      item?.nutrientName,
+      item?.nutrient?.name,
+    ]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase());
+
+    const matched = names.some((target) =>
+      possibleNames.some((name) =>
+        name.includes(target.toLowerCase())
+      )
+    );
+
+    if (matched) {
+      return asNumber(item?.amount ?? item?.value, 0);
+    }
+  }
+
+  return 0;
+}
+
 function normalizeUsdaSearchFood(food) {
   return {
     source: "usda",
@@ -123,11 +150,36 @@ function normalizeUsdaSearchFood(food) {
     name: String(food.description ?? "Unknown food"),
     brandName: food.brandOwner || food.brandName || null,
     dataType: food.dataType || null,
+
     caloriesPer100g: nutrientFromSearch(food, "Energy"),
     proteinPer100g: nutrientFromSearch(food, "Protein"),
-    carbsPer100g: nutrientFromSearch(food, "Carbohydrate, by difference"),
-    fatPer100g: nutrientFromSearch(food, "Total lipid (fat)"),
-    servingGrams: food.servingSize ? asNumber(food.servingSize, 0) : null,
+    carbsPer100g: nutrientFromSearch(
+      food,
+      "Carbohydrate, by difference"
+    ),
+    fatPer100g: nutrientFromSearch(
+      food,
+      "Total lipid (fat)"
+    ),
+
+    sodiumMgPer100g: nutrientFromNames(food, ["sodium"]),
+    fiberPer100g: nutrientFromNames(food, ["fiber"]),
+    sugarPer100g: nutrientFromNames(food, [
+      "sugars",
+      "total sugars",
+    ]),
+    saturatedFatPer100g: nutrientFromNames(food, [
+      "saturated",
+      "fatty acids, total saturated",
+    ]),
+    potassiumMgPer100g: nutrientFromNames(food, [
+      "potassium",
+    ]),
+
+    servingGrams: food.servingSize
+      ? asNumber(food.servingSize, 0)
+      : null,
+
     servingUnit: food.servingSizeUnit || null,
     verifiedBarcode: false,
   };
@@ -141,11 +193,36 @@ function normalizeUsdaDetails(food) {
     name: String(food.description ?? "Unknown food"),
     brandName: food.brandOwner || food.brandName || null,
     dataType: food.dataType || null,
+
     caloriesPer100g: nutrientFromDetails(food, "Energy"),
     proteinPer100g: nutrientFromDetails(food, "Protein"),
-    carbsPer100g: nutrientFromDetails(food, "Carbohydrate, by difference"),
-    fatPer100g: nutrientFromDetails(food, "Total lipid (fat)"),
-    servingGrams: food.servingSize ? asNumber(food.servingSize, 0) : null,
+    carbsPer100g: nutrientFromDetails(
+      food,
+      "Carbohydrate, by difference"
+    ),
+    fatPer100g: nutrientFromDetails(
+      food,
+      "Total lipid (fat)"
+    ),
+
+    sodiumMgPer100g: nutrientFromNames(food, ["sodium"]),
+    fiberPer100g: nutrientFromNames(food, ["fiber"]),
+    sugarPer100g: nutrientFromNames(food, [
+      "sugars",
+      "total sugars",
+    ]),
+    saturatedFatPer100g: nutrientFromNames(food, [
+      "saturated",
+      "fatty acids, total saturated",
+    ]),
+    potassiumMgPer100g: nutrientFromNames(food, [
+      "potassium",
+    ]),
+
+    servingGrams: food.servingSize
+      ? asNumber(food.servingSize, 0)
+      : null,
+
     servingUnit: food.servingSizeUnit || null,
     verifiedBarcode: false,
   };
@@ -166,7 +243,32 @@ function normalizeOpenFoodFacts(product) {
       nutriments["energy-kcal_100g"] ?? nutriments["energy-kcal"],
       0
     ),
-    proteinPer100g: asNumber(nutriments["proteins_100g"], 0),
+	sodiumMgPer100g:
+    nutriments["sodium_100g"] != null
+      ? asNumber(nutriments["sodium_100g"], 0) * 1000
+      : 0,
+
+	fiberPer100g: asNumber(
+		nutriments["fiber_100g"],
+		0
+	),
+
+	sugarPer100g: asNumber(
+		nutriments["sugars_100g"],
+		0
+	),
+
+	saturatedFatPer100g: asNumber(
+		nutriments["saturated-fat_100g"],
+		0
+	),
+
+	potassiumMgPer100g:
+		nutriments["potassium_100g"] != null
+			? asNumber(nutriments["potassium_100g"], 0) * 1000
+			: 0,
+			
+	proteinPer100g: asNumber(nutriments["proteins_100g"], 0),
     carbsPer100g: asNumber(nutriments["carbohydrates_100g"], 0),
     fatPer100g: asNumber(nutriments["fat_100g"], 0),
     servingGrams: null,
